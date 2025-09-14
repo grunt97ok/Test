@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>TON & Stars Purchase Link Generator</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; max-width:900px; margin:28px auto; padding:18px; color:#0b0b0b; }
+    h1 { margin:0 0 8px; font-size:22px; }
+    p.lead { margin:0 0 18px; color:#333; }
+    label { display:block; margin-top:12px; font-weight:600; }
+    input[type="text"], input[type="number"], select, textarea {
+      width:100%; padding:8px 10px; margin-top:6px; box-sizing:border-box; border:1px solid #ddd; border-radius:6px;
+    }
+    .row { display:flex; gap:12px; }
+    .col { flex:1; }
+    button { margin-top:12px; padding:10px 14px; border-radius:8px; border:0; background:#2563eb; color:white; cursor:pointer; }
+    .result { background:#f7f9ff; border:1px solid #e6eefc; padding:12px; margin-top:12px; border-radius:8px; word-break:break-all; }
+    .inline { display:flex; gap:8px; align-items:center; margin-top:6px; }
+    .small { font-size:13px; color:#444; }
+    pre { background:#0b1220; color:#d7e9ff; padding:12px; border-radius:8px; overflow:auto; max-height:360px; }
+    .copy-btn { background:#0b1220; color:#fff; border:0; padding:6px 8px; cursor:pointer; border-radius:6px; }
+    footer { margin-top:22px; color:#666; font-size:13px; }
+  </style>
+</head>
+<body>
+  <h1>TON & Stars Purchase Link Generator</h1>
+  <p class="lead">Enter price and settings below — get a TON deep link and a Stars bot start link plus a ready-made invoice snippet.</p>
+
+  <label>TON Wallet Address
+    <input id="tonWallet" type="text" placeholder="EQD... or your TON wallet address" />
+  </label>
+
+  <div class="row">
+    <div class="col">
+      <label>TON Amount
+        <input id="tonAmount" type="number" min="0" step="0.000001" placeholder="e.g. 5.5" />
+      </label>
+    </div>
+    <div class="col">
+      <label>TON Note (optional)
+        <input id="tonNote" type="text" placeholder="e.g. NFT Purchase" />
+      </label>
+    </div>
+  </div>
+
+  <hr style="margin:18px 0;" />
+
+  <label>Telegram Bot Username (no @)
+    <input id="botUsername" type="text" placeholder="MyStarsBot" />
+  </label>
+
+  <div class="row">
+    <div class="col">
+      <label>Stars Amount (in Stars)
+        <input id="starsAmount" type="number" min="0" step="0.01" placeholder="e.g. 10" />
+      </label>
+    </div>
+    <div class="col">
+      <label>Stars Payload (for start=...)
+        <input id="starsPayload" type="text" placeholder="buy_nft_10stars" />
+      </label>
+    </div>
+  </div>
+
+  <div class="inline">
+    <button id="generateBtn">Generate Links</button>
+    <div style="margin-left:8px;" class="small">Click to generate and show results below</div>
+  </div>
+
+  <section id="results" style="display:none;">
+    <h2 style="margin-top:18px;">Generated Links</h2>
+
+    <div>
+      <label>TON Deep Link</label>
+      <div class="result" id="tonLink"></div>
+      <div class="inline">
+        <button class="copy-btn" data-copy-target="tonLink">Copy TON Link</button>
+        <div class="small">Clicking this link on mobile opens Tonkeeper/TonSpace.</div>
+      </div>
+    </div>
+
+    <div style="margin-top:12px;">
+      <label>Telegram Stars Start Link</label>
+      <div class="result" id="starsLink"></div>
+      <div class="inline">
+        <button class="copy-btn" data-copy-target="starsLink">Copy Stars Link</button>
+        <div class="small">User clicks this to open your bot; the bot must call <code>sendInvoice</code>.</div>
+      </div>
+    </div>
+
+    <div style="margin-top:12px;">
+      <label>Stars Invoice: ready-to-use Python (aiogram) snippet</label>
+      <div class="small" style="margin-bottom:6px;">This snippet sets the price using Stars amount you provided. Provider token must support Stars (Telegram provider).</div>
+      <pre id="invoiceSnippet"></pre>
+      <div class="inline">
+        <button class="copy-btn" data-copy-target="invoiceSnippet">Copy Invoice Snippet</button>
+        <div class="small">Replace &lt;YOUR_PROVIDER_TOKEN&gt; and wire into your bot.</div>
+      </div>
+    </div>
+
+    <div style="margin-top:12px;">
+      <label>Notes / Manual Flow</label>
+      <div class="result" id="notes">
+        After payment via Stars the bot receives a <code>successful_payment</code> update. Then send the NFT gift link to the buyer. 
+        If using TON deep link, monitor the TON blockchain for the incoming tx and then deliver the gift link once confirmed.
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    Tip: For Stars the amount used in the Telegram invoice is provider-dependent — many providers expect integer "smallest units" (Stars × 100). This generator scales the Stars amount accordingly in the aiogram snippet.
+  </footer>
+
+  <script>
+    function urlEncodeUTF8(s) {
+      return encodeURIComponent(s).replace(/'/g,"%27").replace(/"/g,"%22");
+    }
+
+    function formatTonLink(wallet, amount, note) {
+      if (!wallet || !amount) return "";
+      const noteEncoded = note ? urlEncodeUTF8(note) : "";
+      // Ensure amount is a number string
+      const amt = String(amount).trim();
+      let link = `ton://transfer/${wallet}?amount=${amt}`;
+      if (noteEncoded) link += `&text=${noteEncoded}`;
+      return link;
+    }
+
+    function formatStarsStartLink(botUser, payload) {
+      if (!botUser) return "";
+      const p = payload ? encodeURIComponent(payload) : "buy_nft";
+      return `https://t.me/${botUser}?start=${p}`;
+    }
+
+    function starsToProviderUnits(stars) {
+      // Common pattern: provider expects integer smallest unit, e.g. Stars * 100
+      // We'll multiply by 100 and round to integer
+      const n = Number(stars) || 0;
+      return Math.round(n * 100);
+    }
+
+    function genInvoiceSnippet(botUser, payload, starsAmount) {
+      // Create aiogram snippet using currency "XTR" and scaled amount
+      const scaled = starsToProviderUnits(starsAmount);
+      const payloadSafe = payload || "nft_purchase";
+      const botUsername = botUser || "YourBot";
+      const snippet = `from aiogram import Bot, Dispatcher, types, executor
+
+API_TOKEN = "<YOUR_TELEGRAM_BOT_TOKEN>"
+PROVIDER_TOKEN = "<YOUR_PROVIDER_TOKEN>"  # provider that supports Stars
+
+bot = Bot(API_TOKEN)
+dp = Dispatcher(bot)
+
+@dp.message_handler(commands=['start'])
+async def start(message: types.Message):
+    # If you'd like to use payload routing, check message.get_args()
+    if message.get_args() == "${payloadSafe}":
+        prices = [types.LabeledPrice(label="NFT Gift", amount=${scaled})]  # ${starsAmount} Stars -> ${scaled} provider units
+        await bot.send_invoice(
+            chat_id=message.chat.id,
+            title="NFT Purchase",
+            description="Buy your NFT gift",
+            payload="${payloadSafe}",
+            provider_token=PROVIDER_TOKEN,
+            currency="XTR",   # Stars currency
+            prices=prices
+        )
+
+@dp.pre_checkout_query_handler(lambda q: True)
+async def process_pre_checkout(pre_checkout_q: types.PreCheckoutQuery):
+    await bot.answer_pre_checkout_query(pre_checkout_q.id, ok=True)
+
+@dp.message_handler(content_types=types.ContentType.SUCCESSFUL_PAYMENT)
+async def process_payment(message: types.Message):
+    # Payment succeeded — deliver your NFT gift link here
+    await message.reply("Payment received. Sending your NFT gift link...")
+    # TODO: send the gift link stored for this purchase (or mint+transfer)
+    
+if __name__ == '__main__':
+    executor.start_polling(dp, skip_updates=True)`;
+
+      return snippet;
+    }
+
+    document.getElementById('generateBtn').addEventListener('click', () => {
+      const wallet = document.getElementById('tonWallet').value.trim();
+      const tonAmount = document.getElementById('tonAmount').value.trim();
+      const tonNote = document.getElementById('tonNote').value.trim();
+      const botUser = document.getElementById('botUsername').value.trim();
+      const starsAmt = document.getElementById('starsAmount').value.trim();
+      const starsPayload = document.getElementById('starsPayload').value.trim() || `buy_nft_${starsAmt || "0"}stars`;
+
+      const tonL = formatTonLink(wallet, tonAmount, tonNote);
+      const starsL = formatStarsStartLink(botUser, starsPayload);
+
+      document.getElementById('tonLink').textContent = tonL || "(fill wallet + amount)";
+      document.getElementById('starsLink').textContent = starsL || "(fill bot username)";
+      document.getElementById('invoiceSnippet').textContent = genInvoiceSnippet(botUser, starsPayload, starsAmt);
+
+      document.getElementById('results').style.display = 'block';
+    });
+
+    // Copy buttons
+    document.querySelectorAll('.copy-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const targetId = e.currentTarget.getAttribute('data-copy-target');
+        const el = document.getElementById(targetId);
+        const text = el ? el.textContent : '';
+        if (!text) return;
+        try {
+          await navigator.clipboard.writeText(text);
+          btn.textContent = 'Copied ✓';
+          setTimeout(() => btn.textContent = 'Copy', 1200);
+        } catch (err) {
+          alert('Copy failed — select the text and press Ctrl+C / Cmd+C');
+        }
+      });
+    });
+
+    // allow pressing Enter in fields to generate
+    ['tonWallet','tonAmount','tonNote','botUsername','starsAmount','starsPayload'].forEach(id=>{
+      document.getElementById(id).addEventListener('keydown', (e)=>{
+        if (e.key === 'Enter') { e.preventDefault(); document.getElementById('generateBtn').click(); }
+      });
+    });
+  </script>
+</body>
+</html>
